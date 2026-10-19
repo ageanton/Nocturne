@@ -1,5 +1,5 @@
 #include <jni.h>
-#include <oboe/Oboe.h>
+#include <aaudio/AAudio.h>
 #include <android/asset_manager.h>
 #include <android/asset_manager_jni.h>
 #include <cmath>
@@ -52,7 +52,6 @@ public:
         float wetL = (o1 + o3) * 0.5f;
         float wetR = (o2 + o4) * 0.5f;
 
-        // Stereo width matrix
         float mid = (wetL + wetR) * 0.5f;
         float side = (wetL - wetR) * 0.5f * stereoWidth;
         wetL = mid + side;
@@ -63,10 +62,10 @@ public:
     }
 };
 
-class NocturneAudioEngine : public oboe::AudioStreamDataCallback {
+class NocturneAudioEngine {
 private:
-    std::shared_ptr<oboe::AudioStream> stream;
-    tsf* soundFont = nullptr;
+    AAudioStream *stream = nullptr;
+    tsf *soundFont = nullptr;
     std::mutex synthMutex;
     StudioReverb reverb;
 
@@ -81,51 +80,90 @@ private:
     float roomSize = 0.60f;
     float stereoWidth = 1.25f;
 
-    // GM Program numbers mapped to our 11 curated instruments
     const int gmProgramMap[11] = {
-        0,  // 0: Concert Grand (Acoustic Grand Piano)
-        1,  // 1: Studio Grand (Bright Acoustic Piano)
-        3,  // 2: Upright Piano (Honky-tonk / Rich Upright character)
-        0,  // 3: Felt Piano (Intimate Grand + Soft velocity contouring)
-        4,  // 4: Rhodes Electric Piano (Electric Piano 1)
-        24, // 5: Nylon Guitar (Acoustic Guitar Nylon)
-        49, // 6: Soft Strings (String Ensemble 2)
-        0,  // 7: Lo-fi Piano (Detuned warm preset)
-        2,  // 8: Tape Piano (Electric Grand CP80 style)
+        0,  // 0: Concert Grand
+        1,  // 1: Studio Grand
+        3,  // 2: Upright Piano
+        0,  // 3: Felt Piano
+        4,  // 4: Rhodes Electric Piano
+        24, // 5: Nylon Guitar
+        49, // 6: Soft Strings
+        0,  // 7: Lo-fi Piano
+        2,  // 8: Tape Piano
         8,  // 9: Celeste
-        5   // 10: Neon Synth Piano (DX/FM Electric Piano)
+        5   // 10: Neon Synth Piano
     };
 
+    static aaudio_data_callback_result_t dataCallback(
+            AAudioStream *stream,
+            void *userData,
+            void *audioData,
+            int32_t numFrames) {
+        return static_cast<NocturneAudioEngine *>(userData)->renderAudio(
+                static_cast<float *>(audioData), numFrames);
+    }
+
+    static void errorCallback(
+            AAudioStream *stream,
+            void *userData,
+            aaudio_result_t error) {
+        if (error == AAUDIO_ERROR_DISCONNECTED) {
+            // Audio routing changed (e.g., headphones plugged/unplugged)
+            static_cast<NocturneAudioEngine *>(userData)->restartStream();
+        }
+    }
+
 public:
-    bool init(AAssetManager* assetManager) {
-        AAsset* asset = AAssetManager_open(assetManager, "nocturne_studio.sf2", AASSET_MODE_BUFFER);
-        if (!asset) return false;
+    bool init(AAssetManager *assetManager) {
+        if (!soundFont) {
+            AAsset *asset = AAssetManager_open(assetManager, "nocturne_studio.sf2", AASSET_MODE_BUFFER);
+            if (!asset) return false;
 
-        const void* data = AAsset_getBuffer(asset);
-        off_t size = AAsset_getLength(asset);
-        soundFont = tsf_load_memory(data, size);
-        AAsset_close(asset);
+            const void *data = AAsset_getBuffer(asset);
+            off_t size = AAsset_getLength(asset);
+            soundFont = tsf_load_memory(data, size);
+            AAsset_close(asset);
 
-        if (!soundFont) return false;
+            if (!soundFont) return false;
+        }
+        return startStream();
+    }
 
-        oboe::AudioStreamBuilder builder;
-        builder.setDirection(oboe::Direction::Output)
-               ->setPerformanceMode(oboe::PerformanceMode::LowLatency)
-               ->setSharingMode(oboe::SharingMode::Exclusive)
-               ->setFormat(oboe::AudioFormat::Float)
-               ->setChannelCount(oboe::ChannelCount::Stereo)
-               ->setDataCallback(this);
+    bool startStream() {
+        AAudioStreamBuilder *builder = nullptr;
+        if (AAudio_createStreamBuilder(&builder) != AAUDIO_OK) return false;
 
-        oboe::Result result = builder.openStream(stream);
-        if (result != oboe::Result::OK) return false;
+        AAudioStreamBuilder_setDirection(builder, AAUDIO_DIRECTION_OUTPUT);
+        AAudioStreamBuilder_setPerformanceMode(builder, AAUDIO_PERFORMANCE_MODE_LOW_LATENCY);
+        AAudioStreamBuilder_setSharingMode(builder, AAUDIO_SHARING_MODE_EXCLUSIVE);
+        AAudioStreamBuilder_setFormat(builder, AAUDIO_FORMAT_PCM_FLOAT);
+        AAudioStreamBuilder_setChannelCount(builder, 2);
+        AAudioStreamBuilder_setDataCallback(builder, dataCallback, this);
+        AAudioStreamBuilder_setErrorCallback(builder, errorCallback, this);
 
-        int sampleRate = stream->getSampleRate();
-        tsf_set_output(soundFont, TSF_STEREO_INTERLEAVED, sampleRate, 0.0f);
-        tsf_set_max_voices(soundFont, 64);
-        tsf_channel_set_presetnumber(soundFont, 0, 0, 0);
+        aaudio_result_t result = AAudioStreamBuilder_openStream(builder, &stream);
+        AAudioStreamBuilder_delete(builder);
 
-        stream->requestStart();
+        if (result != AAUDIO_OK || !stream) return false;
+
+        int32_t sampleRate = AAudioStream_getSampleRate(stream);
+        {
+            std::lock_guard<std::mutex> lock(synthMutex);
+            tsf_set_output(soundFont, TSF_STEREO_INTERLEAVED, sampleRate, 0.0f);
+            tsf_set_max_voices(soundFont, 64);
+            tsf_channel_set_presetnumber(soundFont, 0, gmProgramMap[currentPresetIndex], 0);
+        }
+
+        AAudioStream_requestStart(stream);
         return true;
+    }
+
+    void restartStream() {
+        if (stream) {
+            AAudioStream_close(stream);
+            stream = nullptr;
+        }
+        startStream();
     }
 
     void noteOn(int midiNote, float velocity) {
@@ -135,20 +173,17 @@ public:
         heldNotes[midiNote] = true;
         sustainedNotes[midiNote] = false;
 
-        // Expressive piano velocity shaping
         float shapedVel = std::pow(std::clamp(velocity, 0.05f, 1.0f), 0.85f);
         if (softPedalActive) shapedVel *= 0.62f;
 
-        // Preset-specific intimacy adjustments
-        if (currentPresetIndex == 3) { // Felt Piano: warm & intimate
+        if (currentPresetIndex == 3) {
             shapedVel *= 0.58f;
-        } else if (currentPresetIndex == 7) { // Lo-fi Piano: slight pitch warmth
+        } else if (currentPresetIndex == 7) {
             tsf_channel_set_pitchwheel(soundFont, 0, 8140);
         } else {
             tsf_channel_set_pitchwheel(soundFont, 0, 8192);
         }
 
-        // Retrigger clean if already ringing
         tsf_channel_note_off(soundFont, 0, midiNote);
         tsf_channel_note_on(soundFont, 0, midiNote, shapedVel);
     }
@@ -187,8 +222,7 @@ public:
         if (index < 0 || index >= 11 || !soundFont) return;
         std::lock_guard<std::mutex> lock(synthMutex);
         currentPresetIndex = index;
-        int gmProgram = gmProgramMap[index];
-        tsf_channel_set_presetnumber(soundFont, 0, gmProgram, 0);
+        tsf_channel_set_presetnumber(soundFont, 0, gmProgramMap[index], 0);
     }
 
     void setControls(float vol, float rev, float room, float width) {
@@ -199,15 +233,10 @@ public:
         stereoWidth = std::clamp(width, 0.5f, 2.0f);
     }
 
-    oboe::DataCallbackResult onAudioReady(
-            oboe::AudioStream *oboeStream,
-            void *audioData,
-            int32_t numFrames) override {
-
-        float *output = static_cast<float *>(audioData);
+    aaudio_data_callback_result_t renderAudio(float *output, int32_t numFrames) {
         if (!soundFont) {
             std::fill(output, output + numFrames * 2, 0.0f);
-            return oboe::DataCallbackResult::Continue;
+            return AAUDIO_CALLBACK_RESULT_CONTINUE;
         }
 
         {
@@ -226,12 +255,11 @@ public:
 
             reverb.process(L, R, rev, room, width);
 
-            // Soft studio limiter (tanh saturation prevents harsh digital clipping on big chords)
             output[i * 2] = std::tanh(L * 1.4f);
             output[i * 2 + 1] = std::tanh(R * 1.4f);
         }
 
-        return oboe::DataCallbackResult::Continue;
+        return AAUDIO_CALLBACK_RESULT_CONTINUE;
     }
 };
 
