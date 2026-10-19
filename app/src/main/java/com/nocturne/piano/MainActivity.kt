@@ -3,6 +3,7 @@ package com.nocturne.piano
 import android.app.AlertDialog
 import android.content.Context
 import android.content.SharedPreferences
+import android.content.res.AssetManager
 import android.graphics.*
 import android.os.*
 import android.view.*
@@ -10,9 +11,7 @@ import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 import java.io.File
 import java.io.FileOutputStream
-import kotlin.math.abs
 import kotlin.math.max
-import kotlin.math.min
 
 data class MidiEvent(val timestampMs: Long, val type: Int, val note: Int, val velocity: Int)
 
@@ -24,7 +23,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    external fun initEngine(assetManager: android.content.res.AssetManager): Boolean
+    external fun initEngine(assetManager: AssetManager): Boolean
     external fun nativeNoteOn(note: Int, velocity: Float)
     external fun nativeNoteOff(note: Int)
     external fun nativeSetSustain(active: Boolean)
@@ -66,7 +65,6 @@ class MainActivity : AppCompatActivity() {
     private var roomSize = 0.65f
     private var stereoWidth = 1.25f
 
-    // MIDI Recording State
     private var isRecording = false
     private var isPlayingRecording = false
     private var recordStartTime = 0L
@@ -76,7 +74,6 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Fullscreen immersive mode
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         @Suppress("DEPRECATION")
         window.decorView.systemUiVisibility = (
@@ -90,7 +87,6 @@ class MainActivity : AppCompatActivity() {
         prefs = getSharedPreferences("NocturneState", Context.MODE_PRIVATE)
         loadPersistedState()
 
-        // Initialize native Oboe + SoundFont engine
         initEngine(assets)
         nativeSetInstrument(currentInstrument)
         nativeSetSustain(sustainOn)
@@ -130,14 +126,13 @@ class MainActivity : AppCompatActivity() {
     private fun buildInterface() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.parseColor("#121316")) // Deep Charcoal
+            setBackgroundColor(Color.parseColor("#121316"))
             layoutParams = ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
             )
         }
 
-        // 1. Compact Top Studio Bar
         val topBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -154,18 +149,15 @@ class MainActivity : AppCompatActivity() {
             textSize = 13f
             typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
             letterSpacing = 0.22f
-            setTextColor(Color.parseColor("#D9822B")) // Copper Accent
+            setTextColor(Color.parseColor("#D9822B"))
             setPadding(0, 0, 24, 0)
         }
         topBar.addView(brandTitle)
 
-        // Instrument Selector Button
-        instrumentBtn = createTopButton(instruments[currentInstrument], true).apply {
-            setOnClickListener { showInstrumentDialog() }
-        }
+        instrumentBtn = createTopButton(instruments[currentInstrument], true)
+        instrumentBtn.setOnClickListener { showInstrumentDialog() }
         topBar.addView(instrumentBtn)
 
-        // Detected Chord Display
         chordReadout = TextView(this).apply {
             text = "—"
             textSize = 14f
@@ -176,49 +168,40 @@ class MainActivity : AppCompatActivity() {
         }
         topBar.addView(chordReadout)
 
-        // One-Touch Chord Strip Toggle
-        val chordToggleBtn = createTopButton("CHORDS", false).apply {
-            setOnClickListener {
-                if (chordPadBar.visibility == View.VISIBLE) {
-                    chordPadBar.visibility = View.GONE
-                    setTextColor(Color.parseColor("#9E9B95"))
-                } else {
-                    chordPadBar.visibility = View.VISIBLE
-                    setTextColor(Color.parseColor("#D9822B"))
-                }
+        val chordToggleBtn = createTopButton("CHORDS", false)
+        chordToggleBtn.setOnClickListener {
+            if (chordPadBar.visibility == View.VISIBLE) {
+                chordPadBar.visibility = View.GONE
+                chordToggleBtn.setTextColor(Color.parseColor("#9E9B95"))
+            } else {
+                chordPadBar.visibility = View.VISIBLE
+                chordToggleBtn.setTextColor(Color.parseColor("#D9822B"))
             }
         }
         topBar.addView(chordToggleBtn)
 
-        // Persistent Sustain Button
-        sustainBtn = createTopButton(if (sustainOn) "SUSTAIN ●" else "SUSTAIN ○", sustainOn).apply {
-            setOnClickListener {
-                sustainOn = !sustainOn
-                nativeSetSustain(sustainOn)
-                updateSustainButtonStyle()
-                saveState()
-            }
+        sustainBtn = createTopButton(if (sustainOn) "SUSTAIN ●" else "SUSTAIN ○", sustainOn)
+        sustainBtn.setOnClickListener {
+            sustainOn = !sustainOn
+            nativeSetSustain(sustainOn)
+            updateSustainButtonStyle()
+            saveState()
         }
         topBar.addView(sustainBtn)
 
-        // Instant One-Touch MIDI Record Button
-        recordBtn = createTopButton("● REC", false).apply {
-            setOnClickListener { toggleMidiRecording() }
-        }
+        recordBtn = createTopButton("● REC", false)
+        recordBtn.setOnClickListener { toggleMidiRecording() }
         topBar.addView(recordBtn)
 
-        // Play / Export Recorded MIDI Button
-        playMidiBtn = createTopButton("▶ PLAY", false).apply {
-            visibility = View.GONE
-            setOnClickListener { playRecordedMidi() }
-            setOnLongClickListener {
-                exportMidiFile()
-                true
-            }
+        playMidiBtn = createTopButton("▶ PLAY", false)
+        playMidiBtn.visibility = View.GONE
+        playMidiBtn.setOnClickListener { playRecordedMidi() }
+        playMidiBtn.setOnLongClickListener {
+            exportMidiFile()
+            true
         }
         topBar.addView(playMidiBtn)
 
-        // Octave Lock Button
         val lockBtn = createTopButton(if (octaveLocked) "LOCKED" else "SCROLL", octaveLocked)
         lockBtn.setOnClickListener {
             octaveLocked = !octaveLocked
@@ -231,24 +214,20 @@ class MainActivity : AppCompatActivity() {
         }
         topBar.addView(lockBtn)
 
-        // Studio Sound & Settings Button
-        val settingsBtn = createTopButton("SOUND", false).apply {
-            setOnClickListener { showSoundSettingsDialog() }
-        }
+        val settingsBtn = createTopButton("SOUND", false)
+        settingsBtn.setOnClickListener { showSoundSettingsDialog() }
         topBar.addView(settingsBtn)
 
         root.addView(topBar)
 
-        // 2. Optional One-Touch Expressive Chord Strip (Hidden unless toggled)
         chordPadBar = buildOneTouchChordBar()
         root.addView(chordPadBar)
 
-        // 3. Main Playable Keyboard View (Takes all remaining screen height)
         pianoView = NocturneKeyboardView(this).apply {
             scrollLocked = octaveLocked
             showLabels = showNoteLabels
-            scrollOffset = prefs.getFloat("scroll_offset", -1f)
-            whiteKeyWidth = prefs.getFloat("key_width", -1f)
+            keyScrollOffset = prefs.getFloat("scroll_offset", -1f)
+            whiteKeyW = prefs.getFloat("key_width", -1f)
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 0,
@@ -273,19 +252,20 @@ class MainActivity : AppCompatActivity() {
             )
         }
 
-        // Rich musical voicings playable with a single tap
         val chords = listOf(
-            "Cmaj9" to intArrayOf(48, 55, 59, 62, 64),
-            "Am9" to intArrayOf(45, 52, 55, 59, 60),
-            "Fmaj7" to intArrayOf(41, 48, 52, 57, 60),
-            "G13" to intArrayOf(43, 50, 53, 59, 64),
-            "Dm9" to intArrayOf(50, 57, 60, 64, 65),
-            "Em7" to intArrayOf(40, 47, 50, 55, 59),
-            "Bbmaj7" to intArrayOf(46, 53, 57, 58, 62),
-            "E7alt" to intArrayOf(40, 47, 52, 56, 60)
+            Pair("Cmaj9", intArrayOf(48, 55, 59, 62, 64)),
+            Pair("Am9", intArrayOf(45, 52, 55, 59, 60)),
+            Pair("Fmaj7", intArrayOf(41, 48, 52, 57, 60)),
+            Pair("G13", intArrayOf(43, 50, 53, 59, 64)),
+            Pair("Dm9", intArrayOf(50, 57, 60, 64, 65)),
+            Pair("Em7", intArrayOf(40, 47, 50, 55, 59)),
+            Pair("Bbmaj7", intArrayOf(46, 53, 57, 58, 62)),
+            Pair("E7alt", intArrayOf(40, 47, 52, 56, 60))
         )
 
-        for ((name, notes) in chords) {
+        for (chord in chords) {
+            val name = chord.first
+            val notes = chord.second
             val btn = Button(this).apply {
                 text = name
                 textSize = 11f
@@ -299,12 +279,12 @@ class MainActivity : AppCompatActivity() {
                     when (event.actionMasked) {
                         MotionEvent.ACTION_DOWN -> {
                             v.setBackgroundColor(Color.parseColor("#D9822B"))
-                            notes.forEach { n -> triggerNoteOn(n + transposeSemitones, 0.78f) }
+                            for (n in notes) triggerNoteOn(n + transposeSemitones, 0.78f)
                             chordReadout.text = name
                         }
                         MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                             v.setBackgroundColor(Color.parseColor("#24262C"))
-                            notes.forEach { n -> triggerNoteOff(n + transposeSemitones) }
+                            for (n in notes) triggerNoteOff(n + transposeSemitones)
                         }
                     }
                     true
@@ -316,24 +296,22 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun createTopButton(title: String, highlighted: Boolean): Button {
-        return Button(this).apply {
-            text = title
-            textSize = 11f
-            isAllCaps = false
-            minHeight = 0
-            minimumHeight = 0
-            minWidth = 0
-            minimumWidth = 0
-            setPadding(24, 8, 24, 8)
-            setTextColor(if (highlighted) Color.parseColor("#D9822B") else Color.parseColor("#9E9B95"))
-            setBackgroundColor(Color.parseColor("#22242A"))
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                dp(34)
-            ).apply {
-                setMargins(6, 0, 6, 0)
-            }
-        }
+        val btn = Button(this)
+        btn.text = title
+        btn.textSize = 11f
+        btn.isAllCaps = false
+        btn.minimumHeight = 0
+        btn.minimumWidth = 0
+        btn.setPadding(24, 6, 24, 6)
+        btn.setTextColor(if (highlighted) Color.parseColor("#D9822B") else Color.parseColor("#9E9B95"))
+        btn.setBackgroundColor(Color.parseColor("#22242A"))
+        val lp = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            dp(34)
+        )
+        lp.setMargins(6, 0, 6, 0)
+        btn.layoutParams = lp
+        return btn
     }
 
     private fun updateSustainButtonStyle() {
@@ -354,7 +332,8 @@ class MainActivity : AppCompatActivity() {
         }
         if (isRecording) {
             val timestamp = SystemClock.elapsedRealtime() - recordStartTime
-            recordedMidiEvents.add(MidiEvent(timestamp, 1, clamped, (velocity * 127).toInt().coerceIn(1, 127)))
+            val velInt = (velocity * 127f).toInt().coerceIn(1, 127)
+            recordedMidiEvents.add(MidiEvent(timestamp, 1, clamped, velInt))
         }
     }
 
@@ -369,7 +348,6 @@ class MainActivity : AppCompatActivity() {
 
     private fun toggleMidiRecording() {
         if (!isRecording) {
-            // Start MIDI capture
             recordedMidiEvents.clear()
             recordStartTime = SystemClock.elapsedRealtime()
             isRecording = true
@@ -378,7 +356,6 @@ class MainActivity : AppCompatActivity() {
             playMidiBtn.visibility = View.GONE
             Toast.makeText(this, "Recording MIDI...", Toast.LENGTH_SHORT).show()
         } else {
-            // Stop MIDI capture
             isRecording = false
             recordBtn.text = "● REC"
             recordBtn.setTextColor(Color.parseColor("#9E9B95"))
@@ -409,18 +386,17 @@ class MainActivity : AppCompatActivity() {
                 }
             }, ev.timestampMs)
         }
-        val totalDuration = (eventsCopy.lastOrNull()?.timestampMs ?: 0L) + 600L
+        val lastTimestamp = if (eventsCopy.isNotEmpty()) eventsCopy.last().timestampMs else 0L
         playbackHandler.postDelayed({
             isPlayingRecording = false
             playMidiBtn.text = "▶ PLAY"
-        }, totalDuration)
+        }, lastTimestamp + 600L)
     }
 
     private fun exportMidiFile() {
         try {
             val file = File(getExternalFilesDir(null), "Nocturne_${System.currentTimeMillis()}.mid")
             FileOutputStream(file).use { out ->
-                // Write Standard MIDI File (Format 0, 1 track, 480 ticks/quarter)
                 val trackData = mutableListOf<Byte>()
                 var lastTime = 0L
                 for (ev in recordedMidiEvents) {
@@ -438,19 +414,18 @@ class MainActivity : AppCompatActivity() {
                         trackData.add(0x00.toByte())
                     }
                 }
-                // End of Track Meta Event
                 writeVarLen(trackData, 0)
                 trackData.add(0xFF.toByte())
                 trackData.add(0x2F.toByte())
                 trackData.add(0x00.toByte())
 
                 val header = byteArrayOf(
-                    'M'.code.toByte(), 'T'.code.toByte(), 'h'.code.toByte(), 'd'.code.toByte(),
+                    0x4D, 0x54, 0x68, 0x64,
                     0, 0, 0, 6,
                     0, 0,
                     0, 1,
                     0x01, 0xE0.toByte(),
-                    'M'.code.toByte(), 'T'.code.toByte(), 'r'.code.toByte(), 'k'.code.toByte()
+                    0x4D, 0x54, 0x72, 0x6B
                 )
                 out.write(header)
                 val len = trackData.size
@@ -464,7 +439,7 @@ class MainActivity : AppCompatActivity() {
             }
             Toast.makeText(this, "Saved MIDI: ${file.name}", Toast.LENGTH_SHORT).show()
         } catch (e: Exception) {
-            Toast.makeText(this, "MIDI Recorded in Memory (${recordedMidiEvents.size / 2} notes)", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "MIDI Recorded (${recordedMidiEvents.size / 2} notes)", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -508,7 +483,7 @@ class MainActivity : AppCompatActivity() {
             }
             val sb = SeekBar(this).apply {
                 max = 100
-                progress = ((initial - minVal) / (maxVal - minVal) * 100).toInt().coerceIn(0, 100)
+                progress = ((initial - minVal) / (maxVal - minVal) * 100f).toInt().coerceIn(0, 100)
                 setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                     override fun onProgressChanged(s: SeekBar?, p: Int, fromUser: Boolean) {
                         val v = minVal + (p / 100f) * (maxVal - minVal)
@@ -526,4 +501,31 @@ class MainActivity : AppCompatActivity() {
             volumeLevel = it
             nativeSetControls(volumeLevel, reverbLevel, roomSize, stereoWidth)
         }
-      
+        addSlider("Acoustic Hall Reverb", reverbLevel, 0.0f, 0.85f) {
+            reverbLevel = it
+            nativeSetControls(volumeLevel, reverbLevel, roomSize, stereoWidth)
+        }
+        addSlider("Room Size & Resonance Decay", roomSize, 0.1f, 0.98f) {
+            roomSize = it
+            nativeSetControls(volumeLevel, reverbLevel, roomSize, stereoWidth)
+        }
+        addSlider("Stereo Imaging Width", stereoWidth, 0.5f, 1.8f) {
+            stereoWidth = it
+            nativeSetControls(volumeLevel, reverbLevel, roomSize, stereoWidth)
+        }
+
+        val labelsCheck = CheckBox(this).apply {
+            text = "Show Note & Octave Labels"
+            setTextColor(Color.WHITE)
+            isChecked = showNoteLabels
+            setOnCheckedChangeListener { _, checked ->
+                showNoteLabels = checked
+                pianoView.showLabels = checked
+                pianoView.invalidate()
+                saveState()
+            }
+        }
+        layout.addView(labelsCheck)
+
+        val hapticsCheck = CheckBox(this).apply {
+     
