@@ -19,21 +19,25 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Verify & Auto-Fix Project Folder Structure
+      - name: Verify & Clean Project Folder Structure
         run: |
-          echo "=== Current Repository Files ==="
-          find . -maxdepth 5 -not -path '*/.*'
-          
-          # Ensure exact directories exist
           mkdir -p app/src/main/java/com/nocturne/piano
           mkdir -p app/src/main/cpp
           mkdir -p app/src/main/assets
           
-          # If MainActivity.kt, CMakeLists.txt, or native-lib.cpp were placed in slightly wrong folders, move them automatically
-          find . -name "MainActivity.kt" -exec cp {} app/src/main/java/com/nocturne/piano/MainActivity.kt \; || true
-          find . -name "CMakeLists.txt" -exec cp {} app/src/main/cpp/CMakeLists.txt \; || true
-          find . -name "native-lib.cpp" -exec cp {} app/src/main/cpp/native-lib.cpp \; || true
-          find . -name "AndroidManifest.xml" -exec cp {} app/src/main/AndroidManifest.xml \; || true
+          # Move files if placed outside their target directories without creating duplicates
+          for f in $(find . -name "MainActivity.kt" -not -path "./app/src/main/java/com/nocturne/piano/MainActivity.kt"); do
+            mv "$f" app/src/main/java/com/nocturne/piano/MainActivity.kt
+          done
+          for f in $(find . -name "CMakeLists.txt" -not -path "./app/src/main/cpp/CMakeLists.txt"); do
+            mv "$f" app/src/main/cpp/CMakeLists.txt
+          done
+          for f in $(find . -name "native-lib.cpp" -not -path "./app/src/main/cpp/native-lib.cpp"); do
+            mv "$f" app/src/main/cpp/native-lib.cpp
+          done
+          for f in $(find . -name "AndroidManifest.xml" -not -path "./app/src/main/AndroidManifest.xml"); do
+            mv "$f" app/src/main/AndroidManifest.xml
+          done
 
       - name: Accept Android SDK Licenses & Install NDK
         run: |
@@ -44,7 +48,6 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y fluid-soundfont-gm timgm6mb-soundfont curl
-          # Use FluidR3 if under memory limit, fallback cleanly
           cp /usr/share/sounds/sf2/FluidR3_GM.sf2 app/src/main/assets/nocturne_studio.sf2 || cp /usr/share/sounds/sf2/TimGM6mb.sf2 app/src/main/assets/nocturne_studio.sf2
           curl -f -L https://raw.githubusercontent.com/schellingb/TinySoundFont/master/tsf.h -o app/src/main/cpp/tsf.h
 
